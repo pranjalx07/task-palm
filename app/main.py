@@ -5,10 +5,10 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 
 from app.config import get_settings
 from app.database import Base, engine
-from app.ingestion import ingest_document
+from app.ingestion import ALLOWED_EXTENSIONS, ingest_document
 from app.memory import build_memory
 from app.rag import chat
-from app.schemas import ChatRequest, ChatResponse, UploadResponse
+from app.schemas import ChatRequest, ChatResponse, HealthResponse, UploadResponse
 from app.vector_store import build_vector_store
 
 
@@ -21,8 +21,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title=get_settings().app_name, lifespan=lifespan)
 
 
-@app.get("/health", tags=["system"])
-def health() -> dict[str, str]:
+@app.get("/health", response_model=HealthResponse, tags=["system"])
+def health() -> HealthResponse:
     return {"status": "ok"}
 
 
@@ -51,18 +51,19 @@ async def upload_document(
     file: UploadFile = File(...), chunking_strategy: str = "fixed"
 ) -> UploadResponse:
     filename = file.filename or ""
-    if not filename.lower().endswith((".pdf", ".txt")):
+    if not any(filename.lower().endswith(extension) for extension in ALLOWED_EXTENSIONS):
         raise HTTPException(status_code=400, detail="Only .pdf and .txt files are supported")
     if chunking_strategy not in {"fixed", "recursive"}:
         raise HTTPException(status_code=400, detail="chunking_strategy must be 'fixed' or 'recursive'")
+    settings = get_settings()
     try:
         content = await file.read()
         document_id, chunk_count = ingest_document(
             filename,
             content,
             chunking_strategy,
-            get_settings(),
-            build_vector_store(get_settings()),
+            settings,
+            build_vector_store(settings),
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
